@@ -13,21 +13,20 @@ from config import cfg
 import cv2
 from tqdm import tqdm
 import json
-from typing import Literal, Union
 from mmdet.apis import init_detector, inference_detector
 from utils.inference_utils import process_mmdet_results, non_max_suppression
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--num_gpus', type=int, dest='num_gpus')
+    parser.add_argument('--num_gpus', type=int, dest='num_gpus',default=1)
     parser.add_argument('--exp_name', type=str, default='output/test')
-    parser.add_argument('--pretrained_model', type=str, default=0)
+    parser.add_argument('--pretrained_model', type=str, default="smpler_x_l32")
     parser.add_argument('--testset', type=str, default='EHF')
     parser.add_argument('--agora_benchmark', type=str, default='na')
-    parser.add_argument('--img_path', type=str, default='input.png')
+    parser.add_argument('--img_path', type=str, default='../demo/images/cxk')
     parser.add_argument('--start', type=str, default=1)
-    parser.add_argument('--end', type=str, default=1)
-    parser.add_argument('--output_folder', type=str, default='output')
+    parser.add_argument('--end', type=str, default=3542)
+    parser.add_argument('--output_folder', type=str, default='../demo/results/cxk')
     parser.add_argument('--demo_dataset', type=str, default='na')
     parser.add_argument('--demo_scene', type=str, default='all')
     parser.add_argument('--show_verts', action="store_true")
@@ -44,9 +43,10 @@ def main():
     args = parse_args()
     config_path = osp.join('./config', f'config_{args.pretrained_model}.py')
     ckpt_path = osp.join('../pretrained_models', f'{args.pretrained_model}.pth.tar')
-
+    '''
+    '''
     cfg.get_config_fromfile(config_path)
-    cfg.update_test_config(args.testset, args.agora_benchmark, shapy_eval_split=None, 
+    cfg.update_test_config(args.testset, args.agora_benchmark, shapy_eval_split=None,
                             pretrained_model_path=ckpt_path, use_cache=False)
     cfg.update_config(args.num_gpus, args.exp_name)
     cudnn.benchmark = True
@@ -54,8 +54,6 @@ def main():
     # load model
     from base import Demoer
     from utils.preprocessing import load_img, process_bbox, generate_patch_image
-    from utils.vis import render_mesh, save_obj
-    from utils.human_models import smpl_x
     demoer = Demoer()
     demoer._make_model()
     demoer.model.eval()
@@ -132,10 +130,6 @@ def main():
             mesh = out['smplx_mesh_cam'].detach().cpu().numpy()[0]
 
             ## save mesh
-            if args.save_mesh:
-                save_path_mesh = os.path.join(args.output_folder, 'mesh')
-                os.makedirs(save_path_mesh, exist_ok= True)
-                save_obj(mesh, smpl_x.face, os.path.join(save_path_mesh, f'{frame:05}_{bbox_id}.obj'))
 
             ## save single person param
             smplx_pred = {}
@@ -148,8 +142,12 @@ def main():
             smplx_pred['reye_pose'] = np.zeros((1, 3))
             smplx_pred['betas'] = out['smplx_shape'].reshape(-1,10).cpu().numpy()
             smplx_pred['expression'] = out['smplx_expr'].reshape(-1,10).cpu().numpy()
-            smplx_pred['transl'] =  out['cam_trans'].reshape(-1,3).cpu().numpy()
+            smplx_pred['transl'] = out['cam_trans'].reshape(-1,3).cpu().numpy()
             save_path_smplx = os.path.join(args.output_folder, 'smplx')
+            
+            for key in smplx_pred:
+                smplx_pred[key] = smplx_pred[key].tolist()
+
             os.makedirs(save_path_smplx, exist_ok= True)
 
             npz_path = os.path.join(save_path_smplx, f'{frame:05}_{bbox_id}.npz')
@@ -158,11 +156,6 @@ def main():
             ## render single person mesh
             focal = [cfg.focal[0] / cfg.input_body_shape[1] * bbox[2], cfg.focal[1] / cfg.input_body_shape[0] * bbox[3]]
             princpt = [cfg.princpt[0] / cfg.input_body_shape[1] * bbox[2] + bbox[0], cfg.princpt[1] / cfg.input_body_shape[0] * bbox[3] + bbox[1]]
-            vis_img = render_mesh(vis_img, mesh, smpl_x.face, {'focal': focal, 'princpt': princpt}, 
-                                  mesh_as_vertices=args.show_verts)
-            if args.show_bbox:
-                vis_img = cv2.rectangle(vis_img, start_point, end_point, (255, 0, 0), 2)
-
             ## save single person meta
             meta = {'focal': focal, 
                     'princpt': princpt, 
@@ -171,17 +164,10 @@ def main():
                     'bbox_id': bbox_id,
                     'img_path': img_path}
             json_object = json.dumps(meta, indent=4)
-
             save_path_meta = os.path.join(args.output_folder, 'meta')
             os.makedirs(save_path_meta, exist_ok= True)
             with open(os.path.join(save_path_meta, f'{frame:05}_{bbox_id}.json'), "w") as outfile:
                 outfile.write(json_object)
-
-        ## save rendered image with all person
-        frame_name = img_path.split('/')[-1]
-        save_path_img = os.path.join(args.output_folder, 'img')
-        os.makedirs(save_path_img, exist_ok= True)
-        cv2.imwrite(os.path.join(save_path_img, f'{frame_name}'), vis_img[:, :, ::-1])
 
 
 if __name__ == "__main__":
